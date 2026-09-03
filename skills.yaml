@@ -1,0 +1,45 @@
+skills:
+  log_pattern_analysis:
+    description: "Identify recurring error patterns in integration logs"
+    prompt_template: |
+      Analyze these log entries and identify:
+      1. Most frequent error codes
+      2. Temporal patterns (time-of-day, day-of-week clusters)
+      3. ECU correlation (which ECUs fail together)
+      Logs: {log_data}
+    tools:
+      - logs_agent
+
+  vehicle_health_check:
+    description: "Comprehensive health assessment of a vehicle's integration status"
+    prompt_template: |
+      Run a full health check for vehicle {vehicle_id}:
+      1. Check current SW versions against latest baselines
+      2. Review recent integration test results
+      3. Check for open defects
+      Return a summary with status: GREEN/YELLOW/RED
+    tools:
+      - niki
+      - text2sql_agent
+
+  standards_compliance_check:
+    description: "Check if a process or artifact complies with ASPICE/AUTOSAR standards"
+    prompt_template: |
+      Evaluate the following against {standard} requirements:
+      {input_description}
+      Identify gaps and provide recommendations.
+    tools:
+      - code_assist_agent
+
+  integration_report:
+    description: "Generate a structured integration status report"
+    prompt_template: |
+      Generate an integration report covering:
+      1. Test execution summary (pass/fail/blocked)
+      2. Open defects by severity
+      3. SW version status
+      4. Risk assessment
+      Scope: {scope}
+    tools:
+      - text2sql_agent
+      - niki

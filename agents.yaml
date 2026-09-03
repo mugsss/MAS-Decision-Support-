@@ -1,0 +1,98 @@
+# Swap providers here — everything downstream depends only on the LangChain
+# BaseChatModel / Embeddings interfaces. Supported: google_genai.
+llm:
+  provider: google_genai
+  # Free-tier daily quota is per-model. The "lite" models carry a much larger
+  # daily allowance, which matters here because one ReAct turn costs several
+  # calls (planner loop + specialist sub-chain + any summarization).
+  # gemini-3.5-flash works well but is capped at only 20 requests/day free.
+  model: gemini-3.1-flash-lite
+  embedding_model: models/gemini-embedding-001
+  temperature: 0.1
+  max_retries: 5
+  # Client-side throttle. Guards the per-minute limit; the per-day cap is a
+  # hard ceiling no throttle can avoid — raise or remove on a paid plan.
+  requests_per_minute: 15
+
+coordinator:
+  name: coordinator
+  description: >
+    ReAct orchestrator that plans, delegates to specialist agents,
+    and synthesizes final answers for automotive software integration queries.
+  system_prompt: |
+    You are a senior automotive software integration engineer AI assistant.
+    Your role is to help engineers with vehicle configuration, diagnostics,
+    fleet analytics, and standards compliance.
+
+    You have access to specialist tools. For each user query:
+    1. Think about which specialist(s) can answer it.
+    2. Call the appropriate tool(s) with a clear, self-contained sub-query.
+    3. Synthesize the results into a concise, actionable answer.
+
+    Domain scope: automotive software integration, AUTOSAR, ASPICE, ASIL,
+    ECU configuration, diagnostic logs, fleet analytics, defect management.
+    If a query is outside this scope, politely decline.
+
+    When write actions are needed, they require human approval.
+    Acknowledge the pending status and continue.
+  max_iterations: 10
+  memory:
+    window_size: 10
+    summary_threshold_tokens: 3000
+
+agents:
+  pdm:
+    name: niki
+    type: mcp
+    description: >
+      PDM specialist — retrieves vehicle configurations, ECU assignments,
+      part numbers, and software versions from the Product Data Management system.
+    mcp_server: mcp/server.py
+    write_tools:
+      - update_sw_version
+
+  logs:
+    name: logs_agent
+    type: local
+    description: >
+      Diagnostics specialist — analyzes integration JSONL logs for error patterns,
+      failure rates, DTC codes, and CAN bus errors.
+    module: agents.logs_agent
+
+  text2sql:
+    name: text2sql_agent
+    type: local
+    description: >
+      Fleet analytics specialist — translates natural-language questions into SQL
+      queries against the fleet SQLite database (vehicles, integration_runs,
+      test_results, defects).
+    module: agents.text2sql_agent
+    db_path: ${FLEET_DB_PATH}
+
+  code_assist:
+    name: code_assist_agent
+    type: local
+    description: >
+      Standards and compliance specialist — answers AUTOSAR, ASPICE, and ASIL
+      questions using RAG over internal documentation.
+    module: agents.code_assist_agent
+    retriever:
+      collection: automotive_docs
+      top_k: 3
+      relevance_threshold: 0.3
+
+hitl:
+  db_path: ${MEMORY_DB_PATH}
+  write_tools:
+    - update_sw_version
+    - create_defect
+    - flag_log_entry
+
+memory:
+  short_term:
+    window_size: 10
+  long_term:
+    db_path: ${MEMORY_DB_PATH}
+    vectorstore:
+      collection: conversation_memory
+      top_k: 3

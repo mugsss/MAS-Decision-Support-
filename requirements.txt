@@ -1,0 +1,31 @@
+# Core — langchain/langgraph 1.x line (langchain-core 1.x)
+langchain>=1.0
+langchain-core>=1.0
+langgraph>=1.0
+langgraph-prebuilt>=1.1.0
+langchain-community>=0.3.0
+langchain-chroma>=0.2.0
+
+# LLM providers
+langchain-google-genai>=4.0.0
+
+# Vector store
+chromadb>=0.5.0
+
+# API
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.0
+
+# Observability
+langsmith>=0.2.0
+opentelemetry-api>=1.28.0
+opentelemetry-sdk>=1.28.0
+opentelemetry-exporter-otlp>=1.28.0
+
+# Data
+aiosqlite>=0.20.0
+
+# Utilities
+python-dotenv>=1.0.0
+pyyaml>=6.0

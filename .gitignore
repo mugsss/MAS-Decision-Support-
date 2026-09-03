@@ -1,0 +1,22 @@
+__pycache__/
+*.pyc
+.env
+data/chroma/
+data/fleet.db
+data/memory.db
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Generated data — recreate with: python setup_data.py
+data/pdm_vehicles.json
+data/integration_logs.jsonl
+
+# Stray artifact from unsubstituted env vars
+${*}
+
+# Frontend build artifacts
+frontend/node_modules/
+frontend/dist/
