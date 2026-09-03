@@ -8,12 +8,15 @@ from functools import lru_cache
 
 @lru_cache(maxsize=1)
 def setup_tracing():
-    tracing_enabled = os.getenv("LANGCHAIN_TRACING_V2", "false").lower() == "true"
+    tracing_enabled = (
+        os.getenv("LANGSMITH_TRACING", os.getenv("LANGCHAIN_TRACING_V2", "false")).lower() == "true"
+    )
 
     if tracing_enabled:
-        os.environ.setdefault("LANGCHAIN_PROJECT", "automotive-mas")
+        project = os.getenv("LANGSMITH_PROJECT", os.getenv("LANGCHAIN_PROJECT", "automotive-mas"))
+        os.environ.setdefault("LANGCHAIN_PROJECT", project)
         print("[observability] LangSmith tracing enabled")
-        print(f"[observability] Project: {os.environ.get('LANGCHAIN_PROJECT')}")
+        print(f"[observability] Project: {project}")
         return {"backend": "langsmith"}
 
     try:

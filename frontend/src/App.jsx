@@ -66,6 +66,8 @@ export default function App() {
           agents: d.agents_used ?? [],
           skills: d.skills_used ?? [],
           blocked: d.blocked,
+          toolCalls: d.tool_calls ?? [],
+          durationSeconds: d.duration_seconds,
         },
       ]);
     } catch (err) {

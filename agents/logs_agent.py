@@ -12,6 +12,7 @@ from pathlib import Path
 
 from langchain.agents import create_agent
 from langchain_core.language_models import BaseChatModel
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 
 from agents.agent_utils import run_agent_sync
@@ -180,10 +181,10 @@ def build_logs_tool(llm: BaseChatModel):
     agent = create_agent(model=llm, tools=LOGS_TOOLS, system_prompt=LOGS_SYSTEM_PROMPT)
 
     @tool
-    def logs_agent(query: str) -> str:
+    def logs_agent(query: str, config: RunnableConfig) -> str:
         """Diagnostics specialist — analyzes integration JSONL logs for error patterns,
         failure rates, DTC codes, and CAN bus errors. Pass a natural-language query
         about log analysis, error patterns, DTC frequencies, or specific vehicle/ECU diagnostics."""
-        return run_agent_sync(agent, query)
+        return run_agent_sync(agent, query, config=config)
 
     return logs_agent

@@ -12,7 +12,17 @@ const AGENT_LABELS = {
 };
 
 export default function Message({ msg }) {
-  const { role, text, agents = [], skills = [], blocked, pending, error } = msg;
+  const {
+    role,
+    text,
+    agents = [],
+    skills = [],
+    blocked,
+    pending,
+    error,
+    toolCalls = [],
+    durationSeconds,
+  } = msg;
 
   if (role === "user") {
     return (
@@ -34,7 +44,7 @@ export default function Message({ msg }) {
         )}
       </div>
 
-      {!pending && (blocked || agents.length > 0) && (
+      {!pending && (blocked || agents.length > 0 || durationSeconds != null) && (
         <div className="meta">
           {blocked && <span className="tag blocked">blocked by guardrail</span>}
           {agents.map((a) => (
@@ -46,7 +56,30 @@ export default function Message({ msg }) {
               {AGENT_LABELS[a] ?? a}
             </span>
           ))}
+          {durationSeconds != null && (
+            <span className="tag duration">{durationSeconds.toFixed(2)}s</span>
+          )}
         </div>
+      )}
+
+      {!pending && toolCalls.length > 0 && (
+        <details className="trace">
+          <summary>
+            {toolCalls.length} tool call{toolCalls.length === 1 ? "" : "s"}
+          </summary>
+          <ul>
+            {toolCalls.map((tc, i) => (
+              <li key={i} className={tc.error ? "trace-error" : undefined}>
+                <span className="trace-tool">{AGENT_LABELS[tc.tool] ?? tc.tool}</span>
+                <span className="trace-duration">{tc.duration_seconds.toFixed(2)}s</span>
+                <pre className="trace-args">
+                  {typeof tc.args === "string" ? tc.args : JSON.stringify(tc.args)}
+                </pre>
+                {tc.error && <div className="trace-error-msg">{tc.error}</div>}
+              </li>
+            ))}
+          </ul>
+        </details>
       )}
     </div>
   );

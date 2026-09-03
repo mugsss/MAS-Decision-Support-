@@ -6,6 +6,7 @@ with different phrasing if the first retrieval looks insufficient. READ-ONLY.
 
 from langchain.agents import create_agent
 from langchain_core.language_models import BaseChatModel
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 
 from agents.agent_utils import run_agent_sync
@@ -51,11 +52,11 @@ def build_code_assist_tool(llm: BaseChatModel, retriever: RAGRetriever):
     agent = create_agent(model=llm, tools=[retrieve_docs], system_prompt=CODE_ASSIST_SYSTEM_PROMPT)
 
     @tool
-    def code_assist_agent(query: str) -> str:
+    def code_assist_agent(query: str, config: RunnableConfig) -> str:
         """Standards and compliance specialist — answers questions about AUTOSAR architecture,
         ASPICE process areas, ASIL/ISO 26262 functional safety, ECU flashing procedures,
         CAN bus diagnostics, OTA updates, and automotive software development standards.
         Pass a clear question about automotive standards or processes."""
-        return run_agent_sync(agent, query)
+        return run_agent_sync(agent, query, config=config)
 
     return code_assist_agent

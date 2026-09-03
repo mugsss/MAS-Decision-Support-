@@ -33,9 +33,7 @@ app = FastAPI(
     title="Automotive MAS — Decision Support",
     description="Multi-agent system for automotive software integration decision support",
     version="1.0.0",
-    lifespan=lifespan,
-    docs_url=None,
-    redoc_url=None,
+    lifespan=lifespan
 )
 
 
@@ -46,11 +44,20 @@ class ChatRequest(BaseModel):
     conversation_id: str | None = None
 
 
+class ToolCallInfo(BaseModel):
+    tool: str
+    args: dict | str
+    duration_seconds: float
+    error: str | None = None
+
+
 class ChatResponse(BaseModel):
     response: str
     conversation_id: str
     agents_used: list[str]
     skills_used: list[str]
+    tool_calls: list[ToolCallInfo]
+    duration_seconds: float
     blocked: bool = False
     block_reason: str | None = None
 
@@ -175,7 +182,6 @@ else:
     async def frontend_missing():
         return {
             "message": "Frontend not built. Run: cd frontend && npm install && npm run build",
-            "api_docs": "/docs",
         }
 
 
@@ -183,6 +189,4 @@ if __name__ == "__main__":
     import uvicorn
 
     print("\n  API running at http://localhost:8000\n")
-    # 127.0.0.1 binds locally only. Use 0.0.0.0 to expose on your network —
-    # note 0.0.0.0 is a bind address, not a URL you can open in a browser.
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)

@@ -2,6 +2,7 @@
 Coordinator Agent — LangChain ReAct agent that orchestrates specialist tools.
 """
 
+import time
 import uuid
 from typing import Any
 
@@ -17,6 +18,7 @@ from memory.long_term import LongTermMemory
 from guardrails.input_guard import InputGuard
 from guardrails.output_guard import OutputGuard
 from observability.tracing import get_run_metadata
+from observability.tool_tracker import ToolCallTracker
 from text_utils import message_text
 
 
@@ -48,6 +50,8 @@ class Coordinator:
                 "conversation_id": conversation_id,
                 "agents_used": [],
                 "skills_used": [],
+                "tool_calls": [],
+                "duration_seconds": 0.0,
                 "blocked": True,
                 "block_reason": reason,
             }
@@ -74,10 +78,13 @@ class Coordinator:
             conversation_id=conversation_id,
         )
 
+        tracker = ToolCallTracker()
+        started_at = time.perf_counter()
         result = await self.agent.ainvoke(
             {"messages": messages},
-            config={"metadata": metadata},
+            config={"metadata": metadata, "callbacks": [tracker]},
         )
+        duration_seconds = round(time.perf_counter() - started_at, 3)
 
         response_messages = result.get("messages", [])
         final_response = ""
@@ -110,6 +117,8 @@ class Coordinator:
             "conversation_id": conversation_id,
             "agents_used": list(set(agents_used)),
             "skills_used": [a for a in agents_used if a in _SKILL_NAMES],
+            "tool_calls": tracker.calls,
+            "duration_seconds": duration_seconds,
         }
 
 

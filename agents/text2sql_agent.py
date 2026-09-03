@@ -8,6 +8,7 @@ import sqlite3
 
 from langchain.agents import create_agent
 from langchain_core.language_models import BaseChatModel
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 
 from agents.agent_utils import run_agent_sync
@@ -103,10 +104,10 @@ def build_text2sql_tool(llm: BaseChatModel, db_path: str):
     )
 
     @tool
-    def text2sql_agent(query: str) -> str:
+    def text2sql_agent(query: str, config: RunnableConfig) -> str:
         """Fleet analytics specialist — translates natural-language questions into SQL
         queries against the fleet database. Covers vehicles, integration runs, test results,
         and defects. Pass a clear analytical question about fleet data."""
-        return run_agent_sync(agent, query)
+        return run_agent_sync(agent, query, config=config)
 
     return text2sql_agent
