@@ -2,12 +2,12 @@
 FastAPI app — API layer for the Automotive MAS.
 """
 
-import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -18,15 +18,18 @@ load_dotenv()
 factory: AgentFactory | None = None
 coordinator = None
 
-
+'''
+Before the server starts accepting requests, build your entire agent system. 
+When the server shuts down, clean it all up.
+'''
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global factory, coordinator
     factory = AgentFactory()
-    coordinator = factory.build()
-    yield
+    coordinator = await factory.build()
+    yield #server is live and accepting requests
     if factory:
-        factory.shutdown()
+        await factory.shutdown()
 
 
 app = FastAPI(
@@ -44,93 +47,74 @@ class ChatRequest(BaseModel):
     conversation_id: str | None = None
 
 
-class ToolCallInfo(BaseModel):
-    tool: str
-    args: dict | str
-    duration_seconds: float
-    error: str | None = None
-
-
-class ChatResponse(BaseModel):
-    response: str
-    conversation_id: str
-    agents_used: list[str]
-    skills_used: list[str]
-    tool_calls: list[ToolCallInfo]
-    duration_seconds: float
-    blocked: bool = False
-    block_reason: str | None = None
-
-
 class ApprovalRequest(BaseModel):
+    decision: str = "approve"
     reason: str | None = None
+    edited_args: dict | None = None
 
 
 # --- Endpoints ---
 
-@app.post("/api/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+@app.post("/api/chat/stream")
+async def chat_stream(request: ChatRequest):
     if coordinator is None:
         raise HTTPException(status_code=503, detail="System not initialized")
 
-    result = await coordinator.chat(
-        message=request.message,
-        conversation_id=request.conversation_id,
+    return StreamingResponse(
+        coordinator.chat_stream(
+            message=request.message,
+            conversation_id=request.conversation_id,
+        ),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache"},
     )
-    return ChatResponse(**result)
 
 
 @app.get("/api/actions/pending")
 async def list_pending_actions():
-    if factory is None:
+    if coordinator is None:
         raise HTTPException(status_code=503, detail="System not initialized")
-    store = factory.get_approval_store()
-    return {"actions": store.list_pending()}
+    return {"actions": coordinator.list_pending()}
 
 
 @app.post("/api/actions/{action_id}/approve")
-async def approve_action(action_id: str):
-    if factory is None:
+async def approve_action(action_id: str, request: ApprovalRequest | None = None):
+    if coordinator is None:
         raise HTTPException(status_code=503, detail="System not initialized")
 
-    store = factory.get_approval_store()
-    action = store.approve(action_id)
-    if not action:
-        raise HTTPException(status_code=404, detail="Action not found or already resolved")
+    decision = request.decision if request else "approve"
+    message = request.reason if request else None
+    edited_args = request.edited_args if request else None
 
-    tool_name = action["tool_name"]
-    args = action["args"]
+    result = await coordinator.handle_approval(
+        action_id=action_id,
+        decision_type=decision,
+        message=message,
+        edited_args=edited_args,
+    )
 
-    # Use the UNWRAPPED tool — the version in tool_map is approval-gated and
-    # would simply re-queue the action instead of executing it.
-    executable = factory.get_executable_tool(tool_name)
-    if executable is None:
-        return {
-            "status": "approved",
-            "action_id": action_id,
-            "note": f"No executable tool registered for '{tool_name}'",
-        }
-
-    try:
-        result = executable.invoke(args)
-        store.set_result(action_id, result)
-        return {"status": "approved", "action_id": action_id, "result": result}
-    except Exception as e:
-        store.set_result(action_id, {"error": str(e)})
-        return {"status": "error", "action_id": action_id, "error": str(e)}
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    result["result"] = result.get("response", "")
+    return result
 
 
 @app.post("/api/actions/{action_id}/reject")
 async def reject_action(action_id: str, request: ApprovalRequest | None = None):
-    if factory is None:
+    if coordinator is None:
         raise HTTPException(status_code=503, detail="System not initialized")
 
-    store = factory.get_approval_store()
-    reason = request.reason if request else ""
-    success = store.reject(action_id, reason)
-    if not success:
-        raise HTTPException(status_code=404, detail="Action not found or already resolved")
-    return {"status": "rejected", "action_id": action_id, "reason": reason}
+    reason = request.reason if request else "Rejected by user."
+
+    result = await coordinator.handle_approval(
+        action_id=action_id,
+        decision_type="reject",
+        message=reason,
+    )
+
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
 
 
 @app.get("/api/conversations/{conversation_id}/memory")
@@ -142,22 +126,9 @@ async def get_conversation_memory(conversation_id: str):
     if messages is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    memories = coordinator.long_term.retrieve_relevant(
-        " ".join(m.get("content", "") for m in messages[:3])
-    )
     return {
         "conversation_id": conversation_id,
         "messages": messages,
-        "related_memories": memories,
-    }
-
-
-@app.get("/api/traces/{run_id}")
-async def get_trace(run_id: str):
-    langsmith_project = os.getenv("LANGCHAIN_PROJECT", "automotive-mas")
-    return {
-        "run_id": run_id,
-        "langsmith_url": f"https://smith.langchain.com/o/default/projects/p/{langsmith_project}/r/{run_id}",
     }
 
 
@@ -171,8 +142,6 @@ async def health():
 
 
 # --- React frontend ---------------------------------------------------------
-# Mounted last so it never shadows an /api route. Built with:
-#   cd frontend && npm install && npm run build
 FRONTEND_DIST = Path(__file__).parent / "frontend" / "dist"
 
 if FRONTEND_DIST.is_dir():

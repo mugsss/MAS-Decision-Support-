@@ -136,6 +136,19 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 }
 .trace-error-msg { margin-top: 4px; color: var(--danger); }
 
+.cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1.1em;
+  background: var(--accent);
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: blink 0.8s step-end infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+.tool-status { margin-top: 8px; font-size: 13px; }
+
 .thinking { color: var(--muted); display: inline-flex; align-items: center; gap: 8px; }
 .spinner {
   width: 13px; height: 13px;

@@ -51,25 +51,91 @@ export default function App() {
     setMessages((m) => [
       ...m,
       { role: "user", text: question },
-      { role: "bot", pending: true },
+      { role: "bot", text: "", streaming: true },
     ]);
     setInput("");
     setSending(true);
 
     try {
-      const d = await api.chat(question, CONVERSATION_ID);
-      setMessages((m) => [
-        ...m.slice(0, -1),
-        {
-          role: "bot",
-          text: d.response,
-          agents: d.agents_used ?? [],
-          skills: d.skills_used ?? [],
-          blocked: d.blocked,
-          toolCalls: d.tool_calls ?? [],
-          durationSeconds: d.duration_seconds,
-        },
-      ]);
+      let agents = [];
+      let skills = [];
+      let toolCalls = [];
+      let duration = null;
+      let blocked = false;
+
+      for await (const event of api.chatStream(question, CONVERSATION_ID)) {
+        switch (event.type) {
+          case "token":
+            setMessages((m) => {
+              const last = m[m.length - 1];
+              return [
+                ...m.slice(0, -1),
+                { ...last, text: last.text + event.content },
+              ];
+            });
+            break;
+
+          case "tool_start":
+            setMessages((m) => {
+              const last = m[m.length - 1];
+              return [
+                ...m.slice(0, -1),
+                { ...last, activeTool: event.tool },
+              ];
+            });
+            break;
+
+          case "tool_end":
+            setMessages((m) => {
+              const last = m[m.length - 1];
+              return [
+                ...m.slice(0, -1),
+                { ...last, activeTool: null },
+              ];
+            });
+            break;
+
+          case "blocked":
+            blocked = true;
+            setMessages((m) => {
+              const last = m[m.length - 1];
+              return [
+                ...m.slice(0, -1),
+                {
+                  ...last,
+                  text: `I can't process this request: ${event.reason}`,
+                  blocked: true,
+                  streaming: false,
+                },
+              ];
+            });
+            break;
+
+          case "done":
+            agents = event.agents_used ?? [];
+            skills = event.skills_used ?? [];
+            toolCalls = event.tool_calls ?? [];
+            duration = event.duration_seconds ?? null;
+            break;
+        }
+      }
+
+      setMessages((m) => {
+        const last = m[m.length - 1];
+        return [
+          ...m.slice(0, -1),
+          {
+            ...last,
+            streaming: false,
+            activeTool: null,
+            agents,
+            skills,
+            blocked,
+            toolCalls,
+            durationSeconds: duration,
+          },
+        ];
+      });
     } catch (err) {
       setMessages((m) => [
         ...m.slice(0, -1),

@@ -1,8 +1,6 @@
 """
 PDM Agent (Niki) — vehicle configs, ECU assignments, part numbers, SW versions.
 Tools are discovered dynamically from the MCP server and injected by AgentFactory.
-A real create_agent loop: the LLM picks which MCP tool(s) to call, instead of
-a hand-written keyword dispatcher.
 """
 
 from langchain.agents import create_agent
@@ -10,7 +8,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, tool
 
-from agents.agent_utils import run_agent_sync
+from agents.agent_utils import run_agent_async
 
 PDM_SYSTEM_PROMPT = """You are a PDM (Product Data Management) specialist for vehicle
 configurations, ECU assignments, part numbers, and software versions.
@@ -26,12 +24,12 @@ def build_pdm_tool(llm: BaseChatModel, mcp_tools: list, name: str = "niki") -> B
     """Build the PDM specialist agent and return the single tool the coordinator calls."""
     agent = create_agent(model=llm, tools=mcp_tools, system_prompt=PDM_SYSTEM_PROMPT)
 
-    def _niki(query: str, config: RunnableConfig) -> str:
+    async def _niki(query: str, config: RunnableConfig) -> str:
         """PDM specialist — retrieves vehicle configurations, ECU assignments,
         part numbers, and software versions from the Product Data Management system.
         Pass a natural-language query describing what vehicle/ECU data you need.
         Available operations: get_vehicle_config, get_ecu_assignments, search_parts,
         get_software_versions, update_sw_version (requires approval)."""
-        return run_agent_sync(agent, query, config=config)
+        return await run_agent_async(agent, query, config=config)
 
     return tool(name)(_niki)

@@ -2,24 +2,25 @@
 Coordinator Agent — LangChain ReAct agent that orchestrates specialist tools.
 """
 
-import time
+import json
 import uuid
-from typing import Any
+from typing import AsyncGenerator
 
-from langchain_core.embeddings import Embeddings
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_core.tools import StructuredTool
 from langchain.agents import create_agent
+from langchain.agents.middleware import (
+    HumanInTheLoopMiddleware,
+    SummarizationMiddleware,
+    ToolErrorMiddleware,
+    ModelRetryMiddleware,
+    ToolCallLimitMiddleware,
+)
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import Command
 
-from config_loader import env_or_default
-from memory.short_term import ShortTermMemory
 from memory.long_term import LongTermMemory
-from guardrails.input_guard import InputGuard
-from guardrails.output_guard import OutputGuard
-from observability.tracing import get_run_metadata
-from observability.tool_tracker import ToolCallTracker
-from text_utils import message_text
 
 
 class Coordinator:
@@ -27,149 +28,181 @@ class Coordinator:
         self,
         agent,
         llm: BaseChatModel,
-        short_term: ShortTermMemory,
         long_term: LongTermMemory,
-        input_guard: InputGuard,
-        output_guard: OutputGuard,
     ):
         self.agent = agent
         self.llm = llm
-        self.short_term = short_term
         self.long_term = long_term
-        self.input_guard = input_guard
-        self.output_guard = output_guard
+        self.pending_interrupts: dict[str, dict] = {}
 
-    async def chat(self, message: str, conversation_id: str | None = None) -> dict[str, Any]:
+    async def chat_stream(self, message: str, conversation_id: str | None = None) -> AsyncGenerator[str, None]:
+        """Stream SSE events as the agent works."""
         if not conversation_id:
             conversation_id = str(uuid.uuid4())
 
-        is_safe, reason = self.input_guard.check(message)
-        if not is_safe:
-            return {
-                "response": f"I can't process this request: {reason}",
-                "conversation_id": conversation_id,
-                "agents_used": [],
-                "skills_used": [],
-                "tool_calls": [],
-                "duration_seconds": 0.0,
-                "blocked": True,
-                "block_reason": reason,
-            }
-
-        long_term_context = ""
-        history = self.short_term.get_messages(conversation_id)
-        if not history or len(history) <= 1:
-            memories = self.long_term.retrieve_relevant(message)
-            if memories:
-                long_term_context = (
-                    "Relevant context from past conversations:\n"
-                    + "\n".join(f"- {m}" for m in memories)
-                )
-
-        self.short_term.add_message(conversation_id, HumanMessage(content=message))
-
         messages = []
-        if long_term_context:
-            messages.append(SystemMessage(content=long_term_context))
-        messages.extend(self.short_term.get_messages(conversation_id))
+        past = self.long_term.get_recent_conversations()
+        if past:
+            context = "Recent conversation history:\n" + "\n".join(
+                f"- {m['role']}: {m['content']}" for m in past
+            )
+            messages.append(SystemMessage(content=context))
+        messages.append(HumanMessage(content=message))
 
-        metadata = get_run_metadata(
-            agent_name="coordinator",
-            conversation_id=conversation_id,
-        )
+        config = {
+            "configurable": {"thread_id": conversation_id},
+        }
 
-        tracker = ToolCallTracker()
-        started_at = time.perf_counter()
-        result = await self.agent.ainvoke(
-            {"messages": messages},
-            config={"metadata": metadata, "callbacks": [tracker]},
-        )
-        duration_seconds = round(time.perf_counter() - started_at, 3)
+        yield self._sse({"type": "start", "conversation_id": conversation_id})
 
-        response_messages = result.get("messages", [])
-        final_response = ""
-        agents_used = []
+        full_response = ""
 
-        for msg in response_messages:
-            if isinstance(msg, AIMessage):
-                text = message_text(msg.content)
-                if text.strip():
-                    final_response = text
-                if hasattr(msg, "tool_calls") and msg.tool_calls:
-                    for tc in msg.tool_calls:
-                        agents_used.append(tc["name"])
-
-        final_response = self.output_guard.sanitize(final_response)
-
-        self.short_term.add_message(conversation_id, AIMessage(content=final_response))
-        await self.short_term.maybe_summarize(conversation_id, self.llm)
+        async for msg, metadata in self.agent.astream(
+            {"messages": messages}, config=config, stream_mode="messages"
+        ):
+            if not isinstance(msg, AIMessage):
+                continue
+            content = msg.content
+            if isinstance(content, list):
+                text = "".join(block.get("text", "") for block in content if isinstance(block, dict))
+            else:
+                text = content or ""
+            if text:
+                full_response += text
+                yield self._sse({"type": "token", "content": text})
 
         self.long_term.save_conversation(
             conversation_id,
             [
                 {"role": "user", "content": message},
-                {"role": "assistant", "content": final_response},
+                {"role": "assistant", "content": full_response},
             ],
         )
 
-        return {
-            "response": final_response,
+        yield self._sse({
+            "type": "done",
             "conversation_id": conversation_id,
-            "agents_used": list(set(agents_used)),
-            "skills_used": [a for a in agents_used if a in _SKILL_NAMES],
-            "tool_calls": tracker.calls,
-            "duration_seconds": duration_seconds,
+        })
+
+    @staticmethod
+    def _sse(data: dict) -> str:
+        return f"data: {json.dumps(data)}\n\n"
+
+    async def handle_approval(self, action_id: str, decision_type: str, message: str | None = None, edited_args: dict | None = None) -> dict:
+        """Resume the agent after a human decision (approve/reject/edit)."""
+        pending = self.pending_interrupts.pop(action_id, None)
+        if not pending:
+            return {"error": "Action not found or already resolved"}
+
+        conversation_id = pending["conversation_id"]
+        config = {
+            "configurable": {"thread_id": conversation_id},
         }
 
+        if decision_type == "approve":
+            decision = {"type": "approve"}
+        elif decision_type == "reject":
+            decision = {"type": "reject", "message": message or "Rejected by user."}
+        elif decision_type == "edit":
+            decision = {
+                "type": "edit",
+                "edited_action": {
+                    "name": pending["tool_name"],
+                    "args": edited_args or pending["args"],
+                },
+            }
+        else:
+            return {"error": f"Unknown decision type: {decision_type}"}
 
-_SKILL_NAMES = set()
+        result = await self.agent.ainvoke(
+            Command(resume={"decisions": [decision]}),
+            config=config,
+        )
+
+        response_messages = result.get("messages", [])
+        final_response = ""
+        for msg in reversed(response_messages):
+            if isinstance(msg, AIMessage):
+                text = msg.text
+                if text.strip():
+                    final_response = text
+                    break
+
+        return {
+            "status": decision_type,
+            "action_id": action_id,
+            "response": final_response,
+        }
+
+    def list_pending(self) -> list[dict]:
+        return [
+            {
+                "action_id": aid,
+                "tool_name": info["tool_name"],
+                "args": info["args"],
+                "status": "pending",
+                "created_at": info["created_at"],
+            }
+            for aid, info in self.pending_interrupts.items()
+        ]
+
+
+async def _tool_error_handler(err, req):
+    return f"Tool '{req.tool_call.get('name', 'unknown')}' failed: {err}"
 
 
 def build_coordinator(
     llm: BaseChatModel,
     tools: list[StructuredTool],
-    system_prompt: str,
-    memory_config: dict,
-    embeddings: Embeddings | None = None,
+    config: dict,
 ) -> Coordinator:
-    from skills.loader import SkillsLoader
-    global _SKILL_NAMES
-    try:
-        loader = SkillsLoader()
-        config = loader.load()
-        _SKILL_NAMES = set(config.keys())
-    except Exception:
-        pass
+    coord_config = config.get("coordinator", {})
+    memory_config = config.get("memory", {})
+    write_tool_names = config.get("hitl", {}).get("write_tools", [])
+    system_prompt = coord_config.get("system_prompt", "")
+
+    # HITL middleware — interrupts write tools for human approval
+    interrupt_on = {}
+    for name in write_tool_names:
+        interrupt_on[name] = {"allowed_decisions": ["approve", "reject", "edit"]}
+
+    stm_config = memory_config.get("short_term", {})
+    window_size = stm_config.get("window_size", 10)
+    max_iterations = coord_config.get("max_iterations", 10)
+
+    middleware = [
+        ModelRetryMiddleware(max_retries=3),
+        ToolErrorMiddleware(
+            aon_error=_tool_error_handler,
+        ),
+        ToolCallLimitMiddleware(run_limit=max_iterations * 2),
+        SummarizationMiddleware(
+            model=llm,
+            trigger=("messages", window_size * 3),
+            keep=("messages", window_size),
+        ),
+    ]
+    #These are the tools that should stop and ask for human approval
+    if interrupt_on:
+        middleware.append(
+            HumanInTheLoopMiddleware(interrupt_on=interrupt_on)
+        )
 
     agent = create_agent(
         model=llm,
         tools=tools,
         system_prompt=system_prompt,
-    )
-
-    stm_config = memory_config.get("short_term", {})
-    short_term = ShortTermMemory(
-        window_size=stm_config.get("window_size", 10),
-        summary_threshold_tokens=stm_config.get("summary_threshold_tokens", 3000),
+        middleware=middleware,
+        checkpointer=InMemorySaver(), # gives the agent a temporary place to save its current state so it can pause and continue later.
     )
 
     ltm_config = memory_config.get("long_term", {})
     long_term = LongTermMemory(
         db_path=ltm_config.get("db_path", "data/memory.db"),
-        chroma_dir=env_or_default("CHROMA_PERSIST_DIR"),
-        collection_name=ltm_config.get("vectorstore", {}).get("collection", "conversation_memory"),
-        embeddings=embeddings,
-        top_k=ltm_config.get("vectorstore", {}).get("top_k", 3),
     )
-
-    input_guard = InputGuard()
-    output_guard = OutputGuard()
 
     return Coordinator(
         agent=agent,
         llm=llm,
-        short_term=short_term,
         long_term=long_term,
-        input_guard=input_guard,
-        output_guard=output_guard,
     )

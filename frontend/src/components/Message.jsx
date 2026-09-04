@@ -1,6 +1,5 @@
 import Markdown from "./Markdown.jsx";
 
-/** Labels the raw tool names the coordinator reports back. */
 const AGENT_LABELS = {
   niki: "PDM (Niki)",
   logs_agent: "Logs",
@@ -19,6 +18,8 @@ export default function Message({ msg }) {
     skills = [],
     blocked,
     pending,
+    streaming,
+    activeTool,
     error,
     toolCalls = [],
     durationSeconds,
@@ -32,19 +33,34 @@ export default function Message({ msg }) {
     );
   }
 
+  const isWorking = pending || streaming;
+  const showText = text && text.length > 0;
+
   return (
     <div className="msg bot">
       <div className={`bubble${error ? " error" : ""}`}>
-        {pending ? (
+        {isWorking && !showText ? (
           <span className="thinking">
-            <span className="spinner" /> routing to specialists…
+            <span className="spinner" />
+            {activeTool
+              ? `calling ${AGENT_LABELS[activeTool] ?? activeTool}…`
+              : "routing to specialists…"}
           </span>
         ) : (
-          <Markdown text={text} />
+          <>
+            <Markdown text={text} />
+            {streaming && <span className="cursor" />}
+            {streaming && activeTool && (
+              <div className="thinking tool-status">
+                <span className="spinner" />
+                calling {AGENT_LABELS[activeTool] ?? activeTool}…
+              </div>
+            )}
+          </>
         )}
       </div>
 
-      {!pending && (blocked || agents.length > 0 || durationSeconds != null) && (
+      {!isWorking && (blocked || agents.length > 0 || durationSeconds != null) && (
         <div className="meta">
           {blocked && <span className="tag blocked">blocked by guardrail</span>}
           {agents.map((a) => (
@@ -62,7 +78,7 @@ export default function Message({ msg }) {
         </div>
       )}
 
-      {!pending && toolCalls.length > 0 && (
+      {!isWorking && toolCalls.length > 0 && (
         <details className="trace">
           <summary>
             {toolCalls.length} tool call{toolCalls.length === 1 ? "" : "s"}

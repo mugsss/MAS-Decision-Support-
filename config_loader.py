@@ -21,7 +21,7 @@ DEFAULTS = {
     "PDM_DATA_PATH": "data/pdm_vehicles.json",
     "LOGS_DATA_PATH": "data/integration_logs.jsonl",
     "DOCS_DIR": "docs",
-    "MCP_SERVER_PATH": "mcp/server.py",
+    "MCP_SERVER_PATH": "pdm_mcp/server.py",
 }
 
 

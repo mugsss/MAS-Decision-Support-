@@ -2,10 +2,6 @@
 # BaseChatModel / Embeddings interfaces. Supported: google_genai.
 llm:
   provider: google_genai
-  # Free-tier daily quota is per-model. The "lite" models carry a much larger
-  # daily allowance, which matters here because one ReAct turn costs several
-  # calls (planner loop + specialist sub-chain + any summarization).
-  # gemini-3.5-flash works well but is capped at only 20 requests/day free.
   model: gemini-3.1-flash-lite
   embedding_model: models/gemini-embedding-001
   temperature: 0.1
@@ -47,7 +43,7 @@ agents:
     description: >
       PDM specialist — retrieves vehicle configurations, ECU assignments,
       part numbers, and software versions from the Product Data Management system.
-    mcp_server: mcp/server.py
+    mcp_server: pdm_mcp/server.py
     write_tools:
       - update_sw_version
 

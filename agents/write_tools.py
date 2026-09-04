@@ -1,6 +1,6 @@
 """
-Standalone write tools — not tied to any specialist, HITL-gated by AgentFactory
-via hitl.approval.wrap_write_tools before being handed to the coordinator.
+Standalone write tools — not tied to any specialist.
+HITL gating is handled by the HumanInTheLoopMiddleware in the coordinator.
 """
 
 import sqlite3
@@ -38,11 +38,11 @@ def build_write_tools() -> list[StructuredTool]:
         StructuredTool.from_function(
             func=_create_defect,
             name="create_defect",
-            description="[REQUIRES APPROVAL] Create a new defect record in the fleet database.",
+            description="Create a new defect record in the fleet database. Requires human approval.",
         ),
         StructuredTool.from_function(
             func=_flag_log_entry,
             name="flag_log_entry",
-            description="[REQUIRES APPROVAL] Flag a log entry as a known issue or for follow-up.",
+            description="Flag a log entry as a known issue or for follow-up. Requires human approval.",
         ),
     ]
